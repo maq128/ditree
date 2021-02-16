@@ -30,15 +30,17 @@ type outline struct {
 
 // 移除中间节点：
 //   - 没有名字和标签
-//   - 有子节点
 //   - 没有被容器实例直接依赖
+//   - 有子节点
 func (n *node) removeIntermediates() {
 	for i := 0; i < len(n.children); {
 		child := n.children[i]
-		if child.RepoTags == "<none>:<none>" && len(child.children) > 0 && len(child.containers) == 0 {
+		if child.RepoTags == "<none>:<none>" && len(child.containers) == 0 && len(child.children) > 0 {
 			// 把当前的 child 用 child.children 替换
-			children := append(n.children[:i], child.children...)
-			n.children = append(children, n.children[i+1:]...)
+			tmp := n.children
+			n.children = append([]*node{}, tmp[:i]...)
+			n.children = append(n.children, child.children...)
+			n.children = append(n.children, tmp[i+1:]...)
 			continue
 		}
 		i++
@@ -76,7 +78,18 @@ func (n *node) printTree(prefix, branch string, o *outline) {
 		} else {
 			padding = "┬─" + strings.Repeat("──", o.maxDepth-n.depth-1)
 		}
-		title = fmt.Sprintf(" %s %-"+strconv.Itoa(o.maxImageNameLen)+"s", n.ID[7:19], n.RepoTags)
+
+		title = " " + n.ID[7:19]
+		format := " %-" + strconv.Itoa(o.maxImageNameLen) + "s"
+		if n.RepoTags == "<none>:<none>" {
+			if n.isLeaf {
+				title += fmt.Sprintf(format, "*")
+			} else {
+				title += fmt.Sprintf(format, "-")
+			}
+		} else {
+			title += fmt.Sprintf(format, n.RepoTags)
+		}
 		if len(n.containers) > 0 {
 			title += "  => " + strings.Join(n.containers, ", ")
 		}
