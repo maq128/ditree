@@ -48,3 +48,15 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ditree
 alias ditree='docker run --rm --name=ditree -v /var/run/docker.sock:/var/run/docker.sock ditree ditree'
 ditree -a
 ```
+
+# 关于 image 的 parent
+
+通过 `cli.ImageList()` 得到 `types.ImageSummary`，其中有 `ParentID` 字段，但是这个 parent 并不可靠。
+
+参考 [Docker image parent is empty](https://github.com/moby/moby/issues/22140#issuecomment-211821828)
+
+也就是说，这样得到的 parent 仅表示该 image 在本地构建时作为起点的那个 image，如果是其它方式获取到的 image，比如
+`docker pull` 或者 `docker load`，这里的 parent 会是空的，甚至当依赖的那个 image 在本地已经存在时也是这样。
+
+经过观察，发现 `cli.ImageInspectWithRaw()` 得到的 `types.ImageInspect` 里面的 `Config.Image` 更有资格作为 parent
+来表示 image 之间的父子关系。

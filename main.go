@@ -12,20 +12,25 @@ import (
 )
 
 type node struct {
-	ID         string
-	ParentID   string
-	RepoTags   string
+	id         string
+	parentID   string
+	tags       string
+	size       string
+	created    string
 	children   []*node
 	containers []string
 	depth      int
 	isRoot     bool
-	isLeaf     bool
 	isEnd      bool // 排在兄弟节点的最后一个
 }
 
-type outline struct {
-	maxDepth        int
-	maxImageNameLen int
+type printContext struct {
+	maxDepth      int
+	maxTagsLen    int
+	maxSizeLen    int
+	maxCreatedLen int
+	printSize     bool
+	printCreated  bool
 }
 
 // 移除中间节点：
@@ -35,7 +40,7 @@ type outline struct {
 func (n *node) removeIntermediates() {
 	for i := 0; i < len(n.children); {
 		child := n.children[i]
-		if child.RepoTags == "<none>:<none>" && len(child.containers) == 0 && len(child.children) > 0 {
+		if child.tags == "<none>:<none>" && len(child.containers) == 0 && len(child.children) > 0 {
 			// 把当前的 child 用 child.children 替换
 			tmp := n.children
 			n.children = append([]*node{}, tmp[:i]...)
@@ -51,45 +56,69 @@ func (n *node) removeIntermediates() {
 	}
 }
 
-func (n *node) profileOutline(o *outline) {
-	if o.maxDepth < n.depth {
-		o.maxDepth = n.depth
+func (n *node) isLeaf() bool {
+	return len(n.children) == 0
+}
+
+func (n *node) profileOutline(ctx *printContext) {
+	if ctx.maxDepth < n.depth {
+		ctx.maxDepth = n.depth
 	}
-	if o.maxImageNameLen < len(n.RepoTags) && len(n.containers) > 0 {
-		o.maxImageNameLen = len(n.RepoTags)
+	if ctx.maxTagsLen < len(n.tags) && (len(n.containers) > 0 || ctx.printSize || ctx.printCreated) {
+		ctx.maxTagsLen = len(n.tags)
+	}
+	if ctx.maxSizeLen < len(n.size) {
+		ctx.maxSizeLen = len(n.size)
+	}
+	if ctx.maxCreatedLen < len(n.created) {
+		ctx.maxCreatedLen = len(n.created)
 	}
 	for i, child := range n.children {
 		child.depth = n.depth + 1
-		child.isLeaf = len(child.children) == 0
 		child.isEnd = i == len(n.children)-1
 
-		child.profileOutline(o)
+		child.profileOutline(ctx)
 	}
 }
 
-func (n *node) printTree(prefix, branch string, o *outline) {
+func (n *node) printTree(prefix, branch string, ctx *printContext) {
 	title := ""
 	padding := ""
 	if n.isRoot {
 		title = "."
 	} else {
-		if n.isLeaf {
-			padding = strings.Repeat("──", o.maxDepth-n.depth)
+		if n.isLeaf() {
+			padding = strings.Repeat("──", ctx.maxDepth-n.depth)
 		} else {
-			padding = "┬─" + strings.Repeat("──", o.maxDepth-n.depth-1)
+			padding = "┬─" + strings.Repeat("──", ctx.maxDepth-n.depth-1)
 		}
 
-		title = " " + n.ID[7:19]
-		format := " %-" + strconv.Itoa(o.maxImageNameLen) + "s"
-		if n.RepoTags == "<none>:<none>" {
-			if n.isLeaf {
+		// image id
+		title = " " + n.id[7:19]
+
+		// image tags
+		format := " %-" + strconv.Itoa(ctx.maxTagsLen) + "s"
+		if n.tags == "<none>:<none>" {
+			if n.isLeaf() {
 				title += fmt.Sprintf(format, "*")
 			} else {
 				title += fmt.Sprintf(format, "-")
 			}
 		} else {
-			title += fmt.Sprintf(format, n.RepoTags)
+			title += fmt.Sprintf(format, n.tags)
 		}
+
+		// image size
+		if ctx.printSize {
+			title += fmt.Sprintf("  %"+strconv.Itoa(ctx.maxSizeLen)+"s", n.size)
+		}
+
+		// image created
+		if ctx.printCreated {
+			title += fmt.Sprintf("  %"+strconv.Itoa(ctx.maxCreatedLen)+"s", n.created)
+		}
+
+		// containers
 		if len(n.containers) > 0 {
 			title += "  => " + strings.Join(n.containers, ", ")
 		}
@@ -108,55 +137,88 @@ func (n *node) printTree(prefix, branch string, o *outline) {
 		if child.isEnd {
 			childBranch = "└─"
 		}
-		child.printTree(childPrefix, childBranch, o)
+		child.printTree(childPrefix, childBranch, ctx)
 	}
+}
+
+func convSizeToReadable(size int64) string {
+	var v float32
+	v = float32(size) / (1000.0 * 1000.0)
+	return fmt.Sprintf("%2.f", v)
+}
+
+func convCreatedToReadable(created int64) string {
+	return fmt.Sprintf("%d", created)
 }
 
 func main() {
 	skipIntermediate := true
+	printSize := false
+	printCreated := false
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-a" {
+			skipIntermediate = false
+		} else if os.Args[i] == "-s" {
+			printSize = true
+		} else if os.Args[i] == "-c" {
+			printCreated = true
+		} else {
+			println("Usage: ditree [-a] [-s] [-c]")
+			println("    -a print all images, default skip intermediate images")
+			println("    -s print image size")
+			println("    -c print image created time")
+			return
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "-a" {
 		skipIntermediate = false
 	}
 
-	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		panic(err)
 	}
 
 	// 查询出所有的 image
-	images, err := cli.ImageList(ctx, types.ImageListOptions{All: true})
+	images, err := cli.ImageList(context.Background(), types.ImageListOptions{All: true})
 	if err != nil {
 		panic(err)
 	}
 
 	// 构建 image 之间的父子关系
 	root := &node{
-		ID:         "images",
-		ParentID:   "",
-		RepoTags:   "",
+		id:         "images",
+		parentID:   "",
+		tags:       "",
 		children:   []*node{},
 		containers: []string{},
 		depth:      1,
 		isRoot:     true,
-		isLeaf:     false,
 		isEnd:      false,
 	}
 	m := map[string]*node{}
-	m[root.ID] = root
+	m[root.id] = root
 	for _, image := range images {
+		// 获取“真正的” parent image
+		insp, _, err := cli.ImageInspectWithRaw(context.Background(), image.ID)
+		if err != nil {
+			panic(err)
+		}
+
 		n := &node{
-			ID:       image.ID,
-			ParentID: image.ParentID,
-			RepoTags: strings.Join(image.RepoTags, ", "),
+			id:       image.ID,
+			parentID: insp.Config.Image,
+			tags:     strings.Join(image.RepoTags, ", "),
+			size:     convSizeToReadable(image.Size),
+			created:  convCreatedToReadable(image.Created),
 			children: []*node{},
 		}
-		m[n.ID] = n
+		m[n.id] = n
 
 	}
 	for _, image := range images {
 		n := m[image.ID]
-		parent, ok := m[n.ParentID]
+		parent, ok := m[n.parentID]
 		if ok {
 			parent.children = append(parent.children, n)
 		} else {
@@ -165,7 +227,7 @@ func main() {
 	}
 
 	// 查询出所有的 container
-	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{All: true})
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
 	if err != nil {
 		panic(err)
 	}
@@ -184,7 +246,10 @@ func main() {
 	}
 
 	// 输出树形图
-	o := &outline{}
-	root.profileOutline(o)
-	root.printTree("", "", o)
+	ctx := &printContext{
+		printSize:    printSize,
+		printCreated: printCreated,
+	}
+	root.profileOutline(ctx)
+	root.printTree("", "", ctx)
 }
