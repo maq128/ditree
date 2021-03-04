@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
@@ -25,12 +26,13 @@ type node struct {
 }
 
 type printContext struct {
-	maxDepth      int
-	maxTagsLen    int
-	maxSizeLen    int
-	maxCreatedLen int
-	printSize     bool
-	printCreated  bool
+	maxDepth        int
+	maxTagsLen      int
+	maxSizeLen      int
+	maxCreatedLen   int
+	printSize       bool
+	printCreated    bool
+	printContainers bool
 }
 
 // 移除中间节点：
@@ -73,6 +75,9 @@ func (n *node) profileOutline(ctx *printContext) {
 	if ctx.maxCreatedLen < len(n.created) {
 		ctx.maxCreatedLen = len(n.created)
 	}
+	if len(n.containers) > 0 {
+		ctx.printContainers = true
+	}
 	for i, child := range n.children {
 		child.depth = n.depth + 1
 		child.isEnd = i == len(n.children)-1
@@ -82,10 +87,22 @@ func (n *node) profileOutline(ctx *printContext) {
 }
 
 func (n *node) printTree(prefix, branch string, ctx *printContext) {
-	title := ""
 	padding := ""
+	title := ""
+	formatTags := " %-" + strconv.Itoa(ctx.maxTagsLen) + "s"
 	if n.isRoot {
-		title = "."
+		padding = strings.Repeat("  ", ctx.maxDepth-1)
+		title = " IMAGE ID    "
+		title += fmt.Sprintf(formatTags, "TAGS")
+		if ctx.printSize {
+			title += fmt.Sprintf("  %"+strconv.Itoa(ctx.maxSizeLen)+"s", "SIZE")
+		}
+		if ctx.printCreated {
+			title += fmt.Sprintf("  %"+strconv.Itoa(ctx.maxCreatedLen)+"s", "CREATED")
+		}
+		if ctx.printContainers {
+			title += "     CONTAINERS"
+		}
 	} else {
 		if n.isLeaf() {
 			padding = strings.Repeat("──", ctx.maxDepth-n.depth)
@@ -97,15 +114,14 @@ func (n *node) printTree(prefix, branch string, ctx *printContext) {
 		title = " " + n.id[7:19]
 
 		// image tags
-		format := " %-" + strconv.Itoa(ctx.maxTagsLen) + "s"
 		if n.tags == "<none>:<none>" {
 			if n.isLeaf() {
-				title += fmt.Sprintf(format, "*")
+				title += fmt.Sprintf(formatTags, "*")
 			} else {
-				title += fmt.Sprintf(format, "-")
+				title += fmt.Sprintf(formatTags, "-")
 			}
 		} else {
-			title += fmt.Sprintf(format, n.tags)
+			title += fmt.Sprintf(formatTags, n.tags)
 		}
 
 		// image size
@@ -119,7 +135,7 @@ func (n *node) printTree(prefix, branch string, ctx *printContext) {
 		}
 
 		// containers
-		if len(n.containers) > 0 {
+		if ctx.printContainers && len(n.containers) > 0 {
 			title += "  => " + strings.Join(n.containers, ", ")
 		}
 	}
@@ -142,13 +158,55 @@ func (n *node) printTree(prefix, branch string, ctx *printContext) {
 }
 
 func convSizeToReadable(size int64) string {
-	var v float32
-	v = float32(size) / (1000.0 * 1000.0)
-	return fmt.Sprintf("%2.f", v)
+	val := float64(size)
+	unit := "B"
+	if val >= 1e3 {
+		val /= 1e3
+		unit = "KB"
+	}
+	if val >= 1e3 {
+		val /= 1e3
+		unit = "MB"
+	}
+	if val >= 1e3 {
+		val /= 1e3
+		unit = "GB"
+	}
+	format := "%.2f %s"
+	if val >= 9.995 {
+		format = "%.1f %s"
+	}
+	if val >= 99.95 {
+		format = "%.f %s"
+	}
+	return fmt.Sprintf(format, val, unit)
 }
 
 func convCreatedToReadable(created int64) string {
-	return fmt.Sprintf("%d", created)
+	tm := time.Unix(created, 0)
+	d := time.Now().Sub(tm)
+	if d.Hours() > 24*365*2 {
+		return fmt.Sprintf("%.f years ago", d.Hours()/(24*365))
+	}
+	if d.Hours() >= 24*61 {
+		return fmt.Sprintf("%.f months ago", d.Hours()/(24*61/2))
+	}
+	if d.Hours() >= 24*14 {
+		return fmt.Sprintf("%.f weeks ago", d.Hours()/(24*7))
+	}
+	if d.Hours() >= 24*2 {
+		return fmt.Sprintf("%.f days ago", d.Hours()/24)
+	}
+	if d.Hours() >= 2 {
+		return fmt.Sprintf("%.f hours ago", d.Hours())
+	}
+	if d.Minutes() >= 2 {
+		return fmt.Sprintf("%.f minutes ago", d.Minutes())
+	}
+	if d.Seconds() >= 10 {
+		return fmt.Sprintf("%.f seconds ago", d.Seconds())
+	}
+	return "seconds ago"
 }
 
 func main() {
