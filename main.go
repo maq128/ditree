@@ -262,16 +262,35 @@ func main() {
 	m := map[string]*node{}
 	m[root.id] = root
 	for _, image := range images {
-		// 获取“真正的” parent image
-		insp, _, err := cli.ImageInspectWithRaw(context.Background(), image.ID)
-		if err != nil {
-			panic(err)
+		parentID := image.ParentID
+		if parentID == "" {
+			// 进一步尝试通过 inspect 信息获取 parentID
+			insp, _, err := cli.ImageInspectWithRaw(context.Background(), image.ID)
+			if err != nil {
+				panic(err)
+			}
+			parentID = insp.Config.Image
+		}
+
+		tags := strings.Join(image.RepoTags, ", ")
+		if tags == "" { // 一种特殊情况，统一处理
+			tags = "<none>:<none>"
+		}
+		if tags == "<none>:<none>" {
+			// 进一步尝试在 RepoDigests 中获得 image 的名字
+			// alpine@sha256:c19173c5ada610a5989151111163d28a67368362762534d8a8121ce95cf2bd5a
+			if len(image.RepoDigests) > 0 {
+				a := strings.Split(image.RepoDigests[0], "@")
+				if len(a) > 0 && a[0] != "<none>" {
+					tags = a[0] + ":<none>"
+				}
+			}
 		}
 
 		n := &node{
 			id:       image.ID,
-			parentID: insp.Config.Image,
-			tags:     strings.Join(image.RepoTags, ", "),
+			parentID: parentID,
+			tags:     tags,
 			size:     convSizeToReadable(image.Size),
 			created:  convCreatedToReadable(image.Created),
 			children: []*node{},

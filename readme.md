@@ -54,8 +54,8 @@ ditree -a
 
 参考 [Docker image parent is empty](https://github.com/moby/moby/issues/22140#issuecomment-211821828)
 
-也就是说，这样得到的 parent 仅表示该 image 在本地构建时作为起点的那个 image，如果是其它方式获取到的 image，比如
-`docker pull` 或者 `docker load`，这里的 `ParentID` 会是空的，甚至当依赖的那个 image 在本地已经存在时也是这样。
+也就是说，只有在该 image 为本地构建时这个 `ParentID` 才会有效，如果是其它方式获取到的 image，比如 `docker pull`
+或者 `docker load`，这个 `ParentID` 会是空的，甚至对应的那个 image 在本地已经存在时也是这样。
 
-经过观察，发现 `cli.ImageInspectWithRaw()` 得到的 `types.ImageInspect` 里面的 `Config.Image` 更有资格作为
+经过观察，发现 `cli.ImageInspectWithRaw()` 得到的 `types.ImageInspect` 里面的 `Config.Image` 可以补充作为
 parent 来表示 image 之间的依赖关系。
