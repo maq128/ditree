@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,12 @@ func (n *node) profileOutline(ctx *printContext) {
 	if len(n.containers) > 0 {
 		ctx.printContainers = true
 	}
+
+	// 把 images 按 tags 排序
+	sort.Slice(n.children, func(i, j int) bool {
+		return n.children[i].tags < n.children[j].tags
+	})
+
 	for i, child := range n.children {
 		child.depth = n.depth + 1
 		child.isEnd = i == len(n.children)-1
@@ -160,17 +167,15 @@ func (n *node) printTree(prefix, branch string, ctx *printContext) {
 func convSizeToReadable(size int64) string {
 	val := float64(size)
 	unit := "B"
-	if val >= 1e3 {
+	if val >= 1e9 {
+		val /= 1e9
+		unit = "GB"
+	} else if val >= 1e6 {
+		val /= 1e6
+		unit = "MB"
+	} else if val >= 1e3 {
 		val /= 1e3
 		unit = "KB"
-	}
-	if val >= 1e3 {
-		val /= 1e3
-		unit = "MB"
-	}
-	if val >= 1e3 {
-		val /= 1e3
-		unit = "GB"
 	}
 	format := "%.2f %s"
 	if val >= 9.995 {
@@ -222,9 +227,9 @@ func main() {
 			printCreated = true
 		} else {
 			println("Usage: ditree [-a] [-s] [-c]")
-			println("    -a print all images, default skip intermediate images")
-			println("    -s print image size")
-			println("    -c print image created time")
+			println("    -a  print all images, if not present, hide intermediate images")
+			println("    -s  print image size")
+			println("    -c  print image created time")
 			return
 		}
 	}
@@ -245,7 +250,7 @@ func main() {
 
 	// 构建 image 之间的父子关系
 	root := &node{
-		id:         "images",
+		id:         "<root>",
 		parentID:   "",
 		tags:       "",
 		children:   []*node{},
